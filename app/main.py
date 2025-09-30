@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-# Добавляем корень проекта в PYTHONPATH
+# PYTHONPATH → корень проекта
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -19,11 +19,12 @@ from core.pipeline.runner import run_pipeline  # noqa: E402
 APP_TITLE = "CSV Normalizer — MVP"
 
 
+# ───────────────────────── helpers ─────────────────────────
 def read_columns_head(path: str, delimiter: str, encoding: str) -> list[str]:
     if not path or not Path(path).exists():
         return []
-    encodings_to_try = [encoding] if encoding != "auto" else ["utf-8", "cp1251", "latin1"]
-    for enc in encodings_to_try:
+    try_order = [encoding] if encoding != "auto" else ["utf-8", "cp1251", "latin1"]
+    for enc in try_order:
         try:
             df = pd.read_csv(path, sep=delimiter, nrows=0, dtype=str, keep_default_na=False, encoding=enc)
             return list(df.columns)
@@ -32,6 +33,48 @@ def read_columns_head(path: str, delimiter: str, encoding: str) -> list[str]:
     return []
 
 
+def folder_picker(label: str, start_path: str | Path | None = None, key: str = "folder_picker") -> str:
+    """Простой проводник папок в сайдбаре. Возвращает выбранную папку."""
+    st.sidebar.subheader(label)
+
+    if f"{key}__cwd" not in st.session_state:
+        base = Path(start_path) if start_path else Path.cwd()
+        st.session_state[f"{key}__cwd"] = str(base.resolve())
+
+    cwd = Path(st.session_state[f"{key}__cwd"])
+    manual_path = st.sidebar.text_input("Текущая папка", value=str(cwd), key=f"{key}__manual_path")
+
+    cols = st.sidebar.columns([1, 1, 2])
+    with cols[0]:
+        if st.button("⬆️ Вверх", key=f"{key}__up"):
+            st.session_state[f"{key}__cwd"] = str(cwd.parent.resolve())
+            cwd = Path(st.session_state[f"{key}__cwd"])
+    with cols[1]:
+        if st.button("Перейти", key=f"{key}__go"):
+            p = Path(manual_path).expanduser()
+            if p.exists() and p.is_dir():
+                st.session_state[f"{key}__cwd"] = str(p.resolve())
+                cwd = Path(st.session_state[f"{key}__cwd"])
+
+    try:
+        subdirs = sorted([p for p in cwd.iterdir() if p.is_dir()], key=lambda p: p.name.lower())
+    except Exception:
+        subdirs = []
+
+    choice = st.sidebar.selectbox(
+        "Подпапки", options=["— оставить текущую —"] + [d.name for d in subdirs], key=f"{key}__select"
+    )
+    if choice != "— оставить текущую —":
+        new_cwd = cwd / choice
+        if new_cwd.exists():
+            st.session_state[f"{key}__cwd"] = str(new_cwd.resolve())
+            cwd = new_cwd
+
+    st.sidebar.caption(f"Текущая папка: {cwd}")
+    return str(cwd)
+
+
+# ───────────────────────── UI ─────────────────────────
 def page_header():
     st.title(APP_TITLE)
     st.caption("Выбор входного CSV → конфиг правил → запуск нормализации → лог")
@@ -57,14 +100,20 @@ def sidebar_inputs():
             uploaded_tmp = tmp.name
             input_path = uploaded_tmp
 
-    output_path = st.sidebar.text_input("Путь для выходного CSV", value="")
-    log_path = st.sidebar.text_input("Путь для лога (.txt)", value="")
+    st.sidebar.divider()
+    st.sidebar.header("Куда сохранять результат")
+    save_dir = folder_picker("Выбор папки сохранения", start_path=Path.cwd(), key="save_dir")
+    out_name = st.sidebar.text_input("Имя выходного CSV", value="normalized.csv")
+    log_name = st.sidebar.text_input("Имя лога (.txt)", value="normalize_log.txt")
+    output_path = str(Path(save_dir) / out_name) if out_name else ""
+    log_path = str(Path(save_dir) / log_name) if log_name else ""
 
     st.sidebar.divider()
     st.sidebar.header("Профиль правил")
     profile = st.sidebar.selectbox(
         "Выберите YAML-профиль",
         options=[
+            "configs/profiles/uni.yaml",
             "configs/profiles/minimal_email.yaml",
         ],
         index=0,
@@ -77,7 +126,6 @@ def sidebar_inputs():
         "Размер чанка", min_value=10_000, max_value=2_000_000, step=50_000, value=100_000
     )
 
-    # Дедупликация
     st.sidebar.divider()
     st.sidebar.header("Дедупликация")
     columns = read_columns_head(input_path, delimiter, encoding)
@@ -90,7 +138,18 @@ def sidebar_inputs():
     )
     dedup_subset = [dedup_field] if (dedup_enabled and columns) else []
 
-    return input_path, output_path, log_path, profile, delimiter, encoding, chunksize, uploaded_tmp, dedup_enabled, dedup_subset
+    return (
+        input_path,
+        output_path,
+        log_path,
+        profile,
+        delimiter,
+        encoding,
+        chunksize,
+        uploaded_tmp,
+        dedup_enabled,
+        dedup_subset,
+    )
 
 
 def show_preview(input_path: str, delimiter: str, encoding: str):
@@ -122,7 +181,7 @@ def show_preview(input_path: str, delimiter: str, encoding: str):
         return
 
     st.write(f"Строк в предпросмотре: {len(df)}  •  Колонок: {len(df.columns)}")
-    st.dataframe(df)
+    st.dataframe(df, use_container_width=True)
 
 
 def run_button(input_path, output_path, log_path, profile, delimiter, encoding, chunksize, dedup_enabled, dedup_subset):
@@ -130,9 +189,17 @@ def run_button(input_path, output_path, log_path, profile, delimiter, encoding, 
     can_run = all([input_path, output_path, log_path, profile])
     run = st.button("🚀 Запустить нормализацию", disabled=not can_run, type="primary")
     if not can_run:
-        st.caption("Заполните пути к файлам и профиль правил.")
+        st.caption("Заполните входной файл, папку сохранения и имена файлов, а также профиль правил.")
 
     if run:
+        # гарантируем наличие папок
+        try:
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            st.error(f"Не удалось создать папку сохранения: {e}")
+            return
+
         with st.spinner("Обработка… это может занять время на больших файлах"):
             run_pipeline(
                 input_csv=input_path,
@@ -147,19 +214,23 @@ def run_button(input_path, output_path, log_path, profile, delimiter, encoding, 
             )
         st.success("Готово! Результат и лог записаны.")
 
-        # Кнопки скачивания
+        # Скачать файлы
         st.subheader("Скачать результаты")
         try:
             if Path(output_path).exists():
                 with open(output_path, "rb") as fh:
-                    st.download_button("⬇️ Скачать CSV", data=fh.read(), file_name=Path(output_path).name, mime="text/csv")
+                    st.download_button(
+                        "⬇️ Скачать CSV", data=fh.read(), file_name=Path(output_path).name, mime="text/csv"
+                    )
         except Exception as e:
             st.warning(f"Не удалось подготовить CSV для скачивания: {e}")
 
         try:
             if Path(log_path).exists():
                 with open(log_path, "rb") as fh:
-                    st.download_button("⬇️ Скачать лог (.txt)", data=fh.read(), file_name=Path(log_path).name, mime="text/plain")
+                    st.download_button(
+                        "⬇️ Скачать лог (.txt)", data=fh.read(), file_name=Path(log_path).name, mime="text/plain"
+                    )
         except Exception as e:
             st.warning(f"Не удалось подготовить лог для скачивания: {e}")
 
@@ -200,7 +271,7 @@ def main():
         dedup_subset,
     )
 
-    # Очистка временного файла (если был)
+    # очистка временного файла
     if uploaded_tmp and Path(uploaded_tmp).exists():
         try:
             os.remove(uploaded_tmp)

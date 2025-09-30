@@ -1,0 +1,51 @@
+profile: "uni"
+version: 1
+
+global:
+  delimiter: ","
+  encoding: "auto"
+  deduplicate:
+    enabled: false
+    subset: []
+    ignore_empty_in_subset: true
+  logging:
+    detail_level: "full"
+
+columns:
+  email:
+    rules:
+      - strip_whitespace: {}
+      - sanitize_invisible: {}
+      - to_lower: {}
+      - email_basic:
+          pattern: "^(.{2,}@[a-z0-9_-]+(\\.[a-z0-9_-]+)*\\.[a-z]{2,6})?$"
+          on_fail: "clear_cell"
+          clear_value: ""
+
+  ip_address:
+    rules:
+      - ip_basic: {}
+
+  phone:
+    rules:
+      - phone_digits_len:
+          min_len: 9
+          max_len: 13
+
+  birthdate:
+    rules:
+      - birthdate_basic:
+          pivot_year: 25     # 00–25? см. правило: 00–24 → 2000–2024; 25–99 → 1900–1999
+
+  lastname:
+    rules:
+      - name_basic: {min_letters: 3}
+  firstname:
+    rules:
+      - name_basic: {min_letters: 3}
+  middlename:
+    rules:
+      - name_basic: {min_letters: 3}
+  fullname:
+    rules:
+      - name_basic: {min_letters: 3}
