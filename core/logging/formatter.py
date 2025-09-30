@@ -4,7 +4,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Dict, Any
 
-
 def format_header(
     *,
     input_csv: str,
@@ -15,6 +14,8 @@ def format_header(
     encoding: str = "auto",
     dedup_enabled: bool = False,
     dedup_subset: List[str] | None = None,
+    duration_sec: float | None = None,     # <- НОВОЕ
+    rows_per_sec: float | None = None,     # <- НОВОЕ
 ) -> str:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cols = ", ".join(columns) if columns else "-"
@@ -30,11 +31,16 @@ def format_header(
         f"Кодировка: {encoding}",
         f"Дедупликация: {'ВКЛ' if dedup_enabled else 'ВЫКЛ'}"
         + (f" (по полю: {', '.join(dedup_subset)})" if dedup_enabled and dedup_subset else ""),
+    ]
+    if duration_sec is not None:
+        lines.append(f"Длительность: {duration_sec:.2f} сек")
+    if rows_per_sec is not None:
+        lines.append(f"Скорость: {rows_per_sec:.2f} строк/сек")
+    lines += [
         "====================================",
         "",
     ]
     return "\n".join(lines)
-
 
 def format_column_section(
     *,
@@ -61,7 +67,6 @@ def format_column_section(
     lines.append("")
     return "\n".join(lines)
 
-
 def format_dedup_section(*, enabled: bool, subset: List[str], removed: int, merge_columns: List[str] | None = None) -> str:
     lines = []
     lines.append("================ ДЕДУПЛИКАЦИЯ ==============")
@@ -70,11 +75,9 @@ def format_dedup_section(*, enabled: bool, subset: List[str], removed: int, merg
         lines.append(f"Поле(я): {', '.join(subset) if subset else '-'}")
         if merge_columns is not None:
             lines.append(f"Объединяем столбцы: {', '.join(merge_columns) if merge_columns else '(нет)'}")
-        lines.append(f"Удалено дубликатов (строк): {removed}")
+        lines.append(f"Удалено дубликатов: {removed}")
     lines.append("")
     return "\n".join(lines)
-
-
 
 def format_footer() -> str:
     return "=============== КОНЕЦ ОТЧЁТА ===============\n"
