@@ -5,9 +5,20 @@ from datetime import datetime
 from typing import List, Dict, Any
 
 
-def format_header(*, input_csv: str, output_csv: str, rows_total: int, columns: List[str]) -> str:
+def format_header(
+    *,
+    input_csv: str,
+    output_csv: str,
+    rows_total: int,
+    columns: List[str],
+    delimiter: str = ",",
+    encoding: str = "auto",
+    dedup_enabled: bool = False,
+    dedup_subset: List[str] | None = None,
+) -> str:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cols = ", ".join(columns) if columns else "-"
+    dedup_subset = dedup_subset or []
     lines = [
         "======== ОТЧЁТ НОРМАЛИЗАЦИИ ========",
         f"Дата/время: {ts}",
@@ -15,6 +26,10 @@ def format_header(*, input_csv: str, output_csv: str, rows_total: int, columns: 
         f"Файл выходной: {output_csv}",
         f"Строк обработано: {rows_total}",
         f"Столбцы: {cols}",
+        f"Разделитель: {delimiter}",
+        f"Кодировка: {encoding}",
+        f"Дедупликация: {'ВКЛ' if dedup_enabled else 'ВЫКЛ'}"
+        + (f" (по полю: {', '.join(dedup_subset)})" if dedup_enabled and dedup_subset else ""),
         "====================================",
         "",
     ]
@@ -43,6 +58,17 @@ def format_column_section(
             lines.append(f"[{column}] строка {row}: \"{before}\" → \"{after}\"{f' ({note})' if note else ''}")
     else:
         lines.append("(примеров изменений нет)")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def format_dedup_section(*, enabled: bool, subset: List[str], removed: int) -> str:
+    lines = []
+    lines.append("================ ДЕДУПЛИКАЦИЯ ==============")
+    lines.append(f"Статус: {'ВКЛЮЧЕНА' if enabled else 'ВЫКЛЮЧЕНА'}")
+    if enabled:
+        lines.append(f"Поле(я): {', '.join(subset) if subset else '-'}")
+        lines.append(f"Удалено дубликатов: {removed}")
     lines.append("")
     return "\n".join(lines)
 
