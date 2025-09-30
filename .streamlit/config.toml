@@ -1,0 +1,7 @@
+[theme]
+base="light"
+primaryColor="#7C3AED"      # фиолетовый
+backgroundColor="#F7F5FF"
+secondaryBackgroundColor="#EEE9FF"
+textColor="#1F1B2D"
+font="sans serif"

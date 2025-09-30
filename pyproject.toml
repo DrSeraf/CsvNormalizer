@@ -1,0 +1,36 @@
+[project]
+name = "csv-normalizer"
+version = "0.1.0"
+description = "Streamlit-приложение и ядро для нормализации CSV по правилам"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name="Serafim"}]
+dependencies = [
+  "pandas>=2.2",
+  "pyyaml>=6.0",
+  "streamlit>=1.38",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pre-commit>=3.7",
+  "black>=24.0",
+  "isort>=5.13",
+  "flake8>=7.0",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = ["E203","W503"]
+
+[tool.pytest.ini_options]
+addopts = "-q"

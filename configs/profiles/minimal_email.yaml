@@ -1,0 +1,20 @@
+version: 1
+columns:
+  email:
+    rules:
+      - strip_whitespace: {}
+      - sanitize_invisible: {}
+      - to_lower: {}
+      - validate_regex:
+          pattern: "^(.{2,}@[a-z0-9_-]+(\\.[a-z0-9_-]+)*\\.[a-z]{2,6})?$"
+          on_fail: "clear_cell"   # если не прошло — очищаем ячейку
+          clear_value: ""         # можно поменять на "NULL"
+global:
+  delimiter: ","
+  encoding: "auto"
+  deduplicate:
+    enabled: false
+    subset: []
+    ignore_empty_in_subset: true
+  logging:
+    detail_level: "full"

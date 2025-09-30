@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Data / logs / outputs
+*.log
+*.txt
+*.csv
+!examples/*.csv
+!examples/*.txt
+
+# IDE
+.vscode/
+.idea/
+
+# Streamlit
+.streamlit/cache/
+.streamlit/secrets.toml
