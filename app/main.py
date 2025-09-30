@@ -126,17 +126,26 @@ def sidebar_inputs():
         "Размер чанка", min_value=10_000, max_value=2_000_000, step=50_000, value=100_000
     )
 
+    # Дедупликация с объединением
     st.sidebar.divider()
     st.sidebar.header("Дедупликация")
     columns = read_columns_head(input_path, delimiter, encoding)
     dedup_enabled = st.sidebar.checkbox("Включить дедупликацию", value=False)
     dedup_field = st.sidebar.selectbox(
-        "Поле для дедупа",
+        "Поле для дедупа (ключ)",
         options=columns if columns else ["(колонки не обнаружены)"],
         disabled=not (dedup_enabled and columns),
         index=0,
     )
     dedup_subset = [dedup_field] if (dedup_enabled and columns) else []
+
+    merge_candidates = [c for c in columns if c != dedup_field] if columns else []
+    dedup_merge_columns = st.sidebar.multiselect(
+        "Столбцы для объединения значений через ';'",
+        options=merge_candidates,
+        default=[],
+        disabled=not (dedup_enabled and columns),
+    )
 
     return (
         input_path,
@@ -149,6 +158,7 @@ def sidebar_inputs():
         uploaded_tmp,
         dedup_enabled,
         dedup_subset,
+        dedup_merge_columns,
     )
 
 
@@ -184,7 +194,18 @@ def show_preview(input_path: str, delimiter: str, encoding: str):
     st.dataframe(df, use_container_width=True)
 
 
-def run_button(input_path, output_path, log_path, profile, delimiter, encoding, chunksize, dedup_enabled, dedup_subset):
+def run_button(
+    input_path,
+    output_path,
+    log_path,
+    profile,
+    delimiter,
+    encoding,
+    chunksize,
+    dedup_enabled,
+    dedup_subset,
+    dedup_merge_columns,
+):
     st.subheader("Запуск")
     can_run = all([input_path, output_path, log_path, profile])
     run = st.button("🚀 Запустить нормализацию", disabled=not can_run, type="primary")
@@ -211,6 +232,7 @@ def run_button(input_path, output_path, log_path, profile, delimiter, encoding, 
                 encoding_override=encoding,
                 dedup_enabled=dedup_enabled,
                 dedup_subset=dedup_subset,
+                dedup_merge_columns=dedup_merge_columns,  # ← важный новый параметр
             )
         st.success("Готово! Результат и лог записаны.")
 
@@ -257,6 +279,7 @@ def main():
         uploaded_tmp,
         dedup_enabled,
         dedup_subset,
+        dedup_merge_columns,
     ) = sidebar_inputs()
     show_preview(input_path, delimiter, encoding)
     run_button(
@@ -269,6 +292,7 @@ def main():
         chunksize,
         dedup_enabled,
         dedup_subset,
+        dedup_merge_columns,
     )
 
     # очистка временного файла

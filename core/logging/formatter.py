@@ -62,15 +62,18 @@ def format_column_section(
     return "\n".join(lines)
 
 
-def format_dedup_section(*, enabled: bool, subset: List[str], removed: int) -> str:
+def format_dedup_section(*, enabled: bool, subset: List[str], removed: int, merge_columns: List[str] | None = None) -> str:
     lines = []
     lines.append("================ ДЕДУПЛИКАЦИЯ ==============")
     lines.append(f"Статус: {'ВКЛЮЧЕНА' if enabled else 'ВЫКЛЮЧЕНА'}")
     if enabled:
         lines.append(f"Поле(я): {', '.join(subset) if subset else '-'}")
-        lines.append(f"Удалено дубликатов: {removed}")
+        if merge_columns is not None:
+            lines.append(f"Объединяем столбцы: {', '.join(merge_columns) if merge_columns else '(нет)'}")
+        lines.append(f"Удалено дубликатов (строк): {removed}")
     lines.append("")
     return "\n".join(lines)
+
 
 
 def format_footer() -> str:
