@@ -11,6 +11,9 @@ import pandas as pd
 import streamlit as st
 import yaml
 
+# (опционально) сделаем широкую раскладку
+st.set_page_config(page_title="CSV Normalizer — MVP", layout="wide")
+
 # PYTHONPATH → корень проекта
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -31,11 +34,23 @@ DEFAULT_SETTINGS = {
     "delimiter": ",",
     "encoding": "auto",
     "chunksize": 100_000,
+
     "dedup_enabled": False,
     "dedup_field": "",
     "dedup_merge_columns": [],
+
     "estimate_total_rows": True,
+
+    # фильтр строк: удалять, если ровно 1 непустая среди выбранных столбцов
+    "row_filter_one_filled_enabled": False,
+    "row_filter_subset": [],
+
+    # очистка коротких значений
+    "min_length_enabled": False,
+    "min_length_value": 3,
+    "min_length_columns": [],
 }
+
 
 def load_settings() -> dict:
     try:
@@ -46,6 +61,7 @@ def load_settings() -> dict:
     except Exception:
         pass
     return dict(DEFAULT_SETTINGS)
+
 
 def save_settings(data: dict) -> None:
     try:
@@ -58,6 +74,7 @@ def save_settings(data: dict) -> None:
 
 # ───────────────────────── helpers ─────────────────────────
 def read_columns_head(path: str, delimiter: str, encoding: str) -> list[str]:
+    """Прочитать только заголовок CSV, вернуть список колонок."""
     if not path or not Path(path).exists():
         return []
     try_order = [encoding] if encoding != "auto" else ["utf-8", "cp1251", "latin1"]
@@ -68,6 +85,7 @@ def read_columns_head(path: str, delimiter: str, encoding: str) -> list[str]:
         except Exception:
             continue
     return []
+
 
 def folder_picker(label: str, start_path: str | Path | None = None, key: str = "folder_picker") -> str:
     """Простой проводник папок в сайдбаре. Возвращает выбранную папку."""
@@ -109,6 +127,7 @@ def folder_picker(label: str, start_path: str | Path | None = None, key: str = "
     st.sidebar.caption(f"Текущая папка: {cwd}")
     return str(cwd)
 
+
 def quick_count_rows(path: str) -> int:
     """Быстрый подсчёт строк (минус заголовок). Делает отдельный проход по файлу."""
     try:
@@ -124,7 +143,8 @@ def quick_count_rows(path: str) -> int:
 # ───────────────────────── UI ─────────────────────────
 def page_header():
     st.title(APP_TITLE)
-    st.caption("Выбор входного CSV → конфиг правил → запуск нормализации → лог + прогресс и метрики")
+    st.caption("Выбор входного CSV → конфиг правил → запуск нормализации → прогресс и лог")
+
 
 def sidebar_inputs():
     settings = load_settings()
@@ -161,19 +181,18 @@ def sidebar_inputs():
 
     st.sidebar.divider()
     st.sidebar.header("Профиль правил")
-    profile = st.sidebar.selectbox(
-        "Выберите YAML-профиль",
-        options=[
-            "configs/profiles/uni.yaml",
-            "configs/profiles/minimal_email.yaml",
-        ],
-        index=0 if settings["profile"] == "configs/profiles/uni.yaml" else 1,
-    )
+    profiles = [
+        "configs/profiles/uni.yaml",
+        "configs/profiles/minimal_email.yaml",
+    ]
+    prof_index = profiles.index(settings["profile"]) if settings["profile"] in profiles else 0
+    profile = st.sidebar.selectbox("Выберите YAML-профиль", options=profiles, index=prof_index)
 
     st.sidebar.divider()
     delimiter = st.sidebar.text_input("Разделитель", value=settings["delimiter"])
-    encoding = st.sidebar.selectbox("Кодировка", options=["auto", "utf-8", "cp1251", "latin1"],
-                                    index=["auto", "utf-8", "cp1251", "latin1"].index(settings["encoding"]))
+    enc_options = ["auto", "utf-8", "cp1251", "latin1"]
+    enc_index = enc_options.index(settings["encoding"]) if settings["encoding"] in enc_options else 0
+    encoding = st.sidebar.selectbox("Кодировка", options=enc_options, index=enc_index)
     chunksize = st.sidebar.number_input(
         "Размер чанка", min_value=10_000, max_value=2_000_000, step=50_000, value=int(settings["chunksize"])
     )
@@ -183,17 +202,21 @@ def sidebar_inputs():
     st.sidebar.header("Дедупликация")
     columns = read_columns_head(input_path, delimiter, encoding)
     dedup_enabled = st.sidebar.checkbox("Включить дедупликацию", value=bool(settings["dedup_enabled"]))
-    dedup_field_default = settings.get("dedup_field") if settings.get("dedup_field") in columns else (columns[0] if columns else "")
-    dedup_field = st.sidebar.selectbox(
-        "Поле для дедупа (ключ)",
-        options=columns if columns else ["(колонки не обнаружены)"],
-        disabled=not (dedup_enabled and columns),
-        index=(columns.index(dedup_field_default) if (columns and dedup_field_default in columns) else 0),
-    ) if columns else "(колонки не обнаружены)"
-    dedup_subset = [dedup_field] if (dedup_enabled and columns) else []
+    # выбрать поле для ключа
+    if columns:
+        df_default_key = settings.get("dedup_field")
+        key_idx = columns.index(df_default_key) if (df_default_key in columns) else 0
+        dedup_field = st.sidebar.selectbox(
+            "Поле для дедупа (ключ)",
+            options=columns,
+            disabled=not (dedup_enabled and columns),
+            index=key_idx,
+        )
+    else:
+        dedup_field = ""
+    dedup_subset = [dedup_field] if (dedup_enabled and columns and dedup_field) else []
 
     merge_candidates = [c for c in columns if c != dedup_field] if columns else []
-    # восстановим сохранённые merge-колонки
     saved_merge = [c for c in settings.get("dedup_merge_columns", []) if c in merge_candidates]
     dedup_merge_columns = st.sidebar.multiselect(
         "Столбцы для объединения значений через ';'",
@@ -204,8 +227,44 @@ def sidebar_inputs():
 
     st.sidebar.divider()
     estimate_total_rows = st.sidebar.checkbox(
-        "Оценить общее число строк для прогресса (требует дополнительного прохода по файлу)",
+        "Оценить общее число строк для прогресса (доп. проход по файлу)",
         value=bool(settings.get("estimate_total_rows", True)),
+    )
+
+    # Фильтр строк — удалить, если ровно 1 заполненная среди выбранных
+    st.sidebar.divider()
+    st.sidebar.header("Фильтр строк")
+    rf_enabled = st.sidebar.checkbox(
+        "Удалять строки, если среди выбранных столбцов заполнена ровно 1 ячейка",
+        value=bool(settings.get("row_filter_one_filled_enabled", False)),
+    )
+    rf_subset_saved = [c for c in settings.get("row_filter_subset", []) if c in (columns or [])]
+    rf_subset = st.sidebar.multiselect(
+        "Столбцы для проверки заполненности",
+        options=columns if columns else [],
+        default=rf_subset_saved,
+        disabled=not (rf_enabled and columns),
+    )
+
+    # Очистка коротких значений
+    st.sidebar.divider()
+    st.sidebar.header("Очистка коротких значений")
+    ml_enabled = st.sidebar.checkbox(
+        "Очищать значения короче N символов",
+        value=bool(settings.get("min_length_enabled", False))
+    )
+    ml_value = st.sidebar.number_input(
+        "Минимальная длина (N)",
+        min_value=1, max_value=100, step=1,
+        value=int(settings.get("min_length_value", 3)),
+        disabled=not ml_enabled
+    )
+    ml_cols_saved = [c for c in settings.get("min_length_columns", []) if c in (columns or [])]
+    ml_columns = st.sidebar.multiselect(
+        "Столбцы для проверки длины",
+        options=columns if columns else [],
+        default=ml_cols_saved,
+        disabled=not (ml_enabled and columns),
     )
 
     return (
@@ -224,8 +283,14 @@ def sidebar_inputs():
         out_name,
         log_name,
         estimate_total_rows,
-        dedup_field if isinstance(dedup_field, str) else "",
+        dedup_field,  # строковое имя ключевой колонки (или "")
+        rf_enabled,
+        rf_subset,
+        ml_enabled,
+        ml_value,
+        ml_columns,
     )
+
 
 def show_preview(input_path: str, delimiter: str, encoding: str):
     st.subheader("Предпросмотр входных данных")
@@ -258,6 +323,7 @@ def show_preview(input_path: str, delimiter: str, encoding: str):
     st.write(f"Строк в предпросмотре: {len(df)}  •  Колонок: {len(df.columns)}")
     st.dataframe(df, use_container_width=True)
 
+
 def run_button(
     input_path,
     output_path,
@@ -274,6 +340,11 @@ def run_button(
     log_name,
     estimate_total_rows,
     dedup_field,
+    rf_enabled,
+    rf_subset,
+    ml_enabled,
+    ml_value,
+    ml_columns,
 ):
     st.subheader("Запуск")
     can_run = all([input_path, output_path, log_path, profile])
@@ -326,10 +397,19 @@ def run_button(
             "delimiter": delimiter,
             "encoding": encoding,
             "chunksize": int(chunksize),
+
             "dedup_enabled": bool(dedup_enabled),
             "dedup_field": dedup_field,
             "dedup_merge_columns": list(dedup_merge_columns or []),
+
             "estimate_total_rows": bool(estimate_total_rows),
+
+            "row_filter_one_filled_enabled": bool(rf_enabled),
+            "row_filter_subset": list(rf_subset or []),
+
+            "min_length_enabled": bool(ml_enabled),
+            "min_length_value": int(ml_value),
+            "min_length_columns": list(ml_columns or []),
         })
 
         with st.spinner("Обработка… это может занять время на больших файлах"):
@@ -341,11 +421,20 @@ def run_button(
                 chunksize=int(chunksize),
                 delimiter_override=delimiter,
                 encoding_override=encoding,
+
                 dedup_enabled=dedup_enabled,
                 dedup_subset=dedup_subset,
                 dedup_merge_columns=dedup_merge_columns,
+
                 progress_cb=_progress_cb,
                 rows_total_estimate=rows_est,
+
+                row_filter_one_filled_enabled=rf_enabled,
+                row_filter_subset=rf_subset,
+
+                min_length_enabled=ml_enabled,
+                min_length_value=int(ml_value),
+                min_length_columns=ml_columns,
             )
 
         prog.progress(100)
@@ -400,6 +489,11 @@ def main():
         log_name,
         estimate_total_rows,
         dedup_field,
+        rf_enabled,
+        rf_subset,
+        ml_enabled,
+        ml_value,
+        ml_columns,
     ) = sidebar_inputs()
     show_preview(input_path, delimiter, encoding)
     run_button(
@@ -418,6 +512,11 @@ def main():
         log_name,
         estimate_total_rows,
         dedup_field,
+        rf_enabled,
+        rf_subset,
+        ml_enabled,
+        ml_value,
+        ml_columns,
     )
 
     # очистка временного файла

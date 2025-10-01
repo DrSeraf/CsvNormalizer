@@ -6,6 +6,7 @@ import time
 from typing import Callable, Dict, Any, List, Optional
 
 import yaml
+import pandas as pd
 
 from core.pipeline import registry
 from core.io.reader import read_csv_in_chunks
@@ -14,10 +15,12 @@ from core.logging.sink import LogSink
 from core.logging.formatter import (
     format_header,
     format_column_section,
+    format_row_filters_section,   # NEW
     format_dedup_section,
     format_footer,
 )
-from core.dedup.engine import DedupMergeEngine  # для дедуп с объединением
+from core.dedup.engine import DedupMergeEngine
+from core.row_filters.engine import OneFilledRowFilter  # NEW
 
 TITLES = {
     "email": "ПОЧТА",
@@ -40,11 +43,20 @@ def run_pipeline(
     delimiter_override: Optional[str] = None,
     encoding_override: Optional[str] = None,
     dedup_enabled: bool = False,
-    dedup_subset: Optional[List[str]] = None,        # ожидаем список из 1 поля (ключ)
+    dedup_subset: Optional[List[str]] = None,
     ignore_empty_in_subset: bool = True,
-    dedup_merge_columns: Optional[List[str]] = None, # какие колонки объединять через ';'
-    progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,  # <- НОВОЕ
-    rows_total_estimate: Optional[int] = None,       # <- НОВОЕ (для процента/ETA)
+    dedup_merge_columns: Optional[List[str]] = None,
+    progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+    rows_total_estimate: Optional[int] = None,
+
+    # NEW — очистка коротких значений
+    min_length_enabled: bool = False,
+    min_length_value: int = 3,
+    min_length_columns: Optional[List[str]] = None,
+
+    # NEW — фильтр строк "только 1 заполненная"
+    row_filter_one_filled_enabled: bool = False,
+    row_filter_subset: Optional[List[str]] = None,
 ) -> None:
     with open(config_yaml, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
@@ -60,7 +72,7 @@ def run_pipeline(
     key_col = (dedup_subset or [None])[0]
     merge_cols = dedup_merge_columns or []
 
-    summary = {
+    summary: Dict[str, Any] = {
         "rows_total": 0,
         "columns": list(columns_cfg.keys()),
         "delimiter": delimiter,
@@ -71,6 +83,13 @@ def run_pipeline(
             "removed": 0,
             "merge_columns": merge_cols,
         },
+        "row_filters": {
+            "one_filled": {
+                "enabled": bool(row_filter_one_filled_enabled and (row_filter_subset or [])),
+                "subset": row_filter_subset or [],
+                "removed": 0,
+            }
+        },
         "cols_stats": {},   # col -> {changed, cleared, examples}
         "duration_sec": 0.0,
         "rows_per_sec": None,
@@ -79,35 +98,34 @@ def run_pipeline(
     writer = CsvIncrementalWriter(output_csv)
     deduper: Optional[DedupMergeEngine] = None
 
-    # прогресс/метрики
     start_ts = time.perf_counter()
     rows_done = 0
     examples_limit = 25
     first_chunk_written = False
 
+    # подготовим фильтр строк (если нужен)
+    row_filter = OneFilledRowFilter(subset=row_filter_subset or []) if summary["row_filters"]["one_filled"]["enabled"] else None
+
+    # подготовим функцию "короткие значения"
+    ml_cols = set(min_length_columns or [])
+    min_len = int(min_length_value)
+    apply_min_length = bool(min_length_enabled and ml_cols)
+
     if progress_cb:
-        progress_cb({
-            "phase": "start",
-            "rows_done": 0,
-            "rows_est": rows_total_estimate,
-            "elapsed_sec": 0.0,
-            "rps": 0.0,
-            "percent": 0 if rows_total_estimate else None,
-        })
+        progress_cb({"phase": "start", "rows_done": 0, "rows_est": rows_total_estimate, "elapsed_sec": 0.0, "rps": 0.0, "percent": 0})
 
     for chunk in read_csv_in_chunks(input_csv, delimiter=delimiter, encoding=encoding, chunksize=chunksize):
         chunk_len = len(chunk)
         summary["rows_total"] += chunk_len
         rows_done += chunk_len
 
-        # применяем правила профиля к колонкам
+        # 1) Правила из профиля по колонкам
         for col_name, spec in columns_cfg.items():
             if col_name not in chunk.columns:
                 continue
 
             rules: List[Dict[str, Any]] = spec.get("rules", [])
             series = chunk[col_name]
-
             local_changed = 0
             local_cleared = 0
             local_examples: List[Dict[str, Any]] = []
@@ -140,7 +158,30 @@ def run_pipeline(
             if space_left > 0 and local_examples:
                 summary["cols_stats"][col_name]["examples"].extend(local_examples[:space_left])
 
-        # дедуп с объединением
+        # 2) Очистка коротких значений (доп. правило из UI)
+        if apply_min_length:
+            fn = registry.get("min_length_clear")
+            for col in [c for c in chunk.columns if c in ml_cols]:
+                new_series, stats = fn(chunk[col], min_len=min_len)
+                chunk[col] = new_series
+
+                if col not in summary["cols_stats"]:
+                    summary["cols_stats"][col] = {"changed": 0, "cleared": 0, "examples": []}
+                summary["cols_stats"][col]["changed"] += int(stats.get("changed", 0))
+                summary["cols_stats"][col]["cleared"] += int(stats.get("cleared", 0))
+                space_left = examples_limit - len(summary["cols_stats"][col]["examples"])
+                if space_left > 0:
+                    summary["cols_stats"][col]["examples"].extend(stats.get("examples", [])[:space_left])
+
+        # 3) Фильтр строк "только 1 заполненная ячейка"
+        if row_filter is not None:
+            before = len(chunk)
+            chunk, rstats = row_filter.apply(chunk)
+            removed_now = before - len(chunk)
+            if removed_now:
+                summary["row_filters"]["one_filled"]["removed"] += removed_now
+
+        # 4) Дедуп/мердж или запись
         if summary["dedup"]["enabled"]:
             if deduper is None:
                 deduper = DedupMergeEngine(
@@ -151,27 +192,19 @@ def run_pipeline(
                 )
             deduper.process_chunk(chunk)
         else:
-            # если дедуп выключен — пишем сразу
             writer.write_chunk(chunk, header=not first_chunk_written)
             first_chunk_written = True
 
-        # прогресс-колбэк
+        # прогресс
         if progress_cb:
             elapsed = time.perf_counter() - start_ts
             rps = (rows_done / elapsed) if elapsed > 0 else 0.0
             percent = None
             if rows_total_estimate and rows_total_estimate > 0:
                 percent = max(0, min(100, int(rows_done * 100 / rows_total_estimate)))
-            progress_cb({
-                "phase": "processing",
-                "rows_done": rows_done,
-                "rows_est": rows_total_estimate,
-                "elapsed_sec": elapsed,
-                "rps": rps,
-                "percent": percent,
-            })
+            progress_cb({"phase": "processing", "rows_done": rows_done, "rows_est": rows_total_estimate, "elapsed_sec": elapsed, "rps": rps, "percent": percent})
 
-    # если дедуп включён, выгружаем агрегат в CSV
+    # выгрузка после дедупа
     if summary["dedup"]["enabled"] and deduper is not None:
         for out_df in deduper.export_batches(batch_size=100_000):
             writer.write_chunk(out_df, header=not first_chunk_written)
@@ -182,16 +215,8 @@ def run_pipeline(
     summary["duration_sec"] = time.perf_counter() - start_ts
     summary["rows_per_sec"] = (summary["rows_total"] / summary["duration_sec"]) if summary["duration_sec"] > 0 else None
 
-    # финальный прогресс
     if progress_cb:
-        progress_cb({
-            "phase": "done",
-            "rows_done": rows_done,
-            "rows_est": rows_total_estimate,
-            "elapsed_sec": summary["duration_sec"],
-            "rps": summary["rows_per_sec"] or 0.0,
-            "percent": 100,
-        })
+        progress_cb({"phase": "done", "rows_done": rows_done, "rows_est": rows_total_estimate, "elapsed_sec": summary["duration_sec"], "rps": summary["rows_per_sec"] or 0.0, "percent": 100})
 
     # лог
     log.write(format_header(
@@ -207,6 +232,7 @@ def run_pipeline(
         rows_per_sec=summary["rows_per_sec"],
     ))
 
+    # секции по колонкам
     for col, stats in summary["cols_stats"].items():
         title = TITLES.get(col, col.upper())
         log.write(format_column_section(
@@ -217,6 +243,15 @@ def run_pipeline(
             examples=stats["examples"],
         ))
 
+    # фильтр строк
+    rf = summary["row_filters"]["one_filled"]
+    log.write(format_row_filters_section(
+        one_filled_enabled=rf["enabled"],
+        subset=rf["subset"],
+        removed=rf["removed"],
+    ))
+
+    # дедуп
     log.write(format_dedup_section(
         enabled=summary["dedup"]["enabled"],
         subset=summary["dedup"]["subset"],

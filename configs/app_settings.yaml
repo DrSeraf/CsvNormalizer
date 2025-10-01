@@ -6,6 +6,19 @@ delimiter: ','
 encoding: auto
 estimate_total_rows: true
 log_name: normalize_log.txt
+min_length_columns:
+- nickname_mg
+- email
+- birthday
+- ip_address
+min_length_enabled: true
+min_length_value: 3
 out_name: normalized.csv
 profile: configs/profiles/uni.yaml
+row_filter_one_filled_enabled: true
+row_filter_subset:
+- nickname_mg
+- email
+- ip_address
+- birthday
 save_dir: D:\Desktop

@@ -14,8 +14,8 @@ def format_header(
     encoding: str = "auto",
     dedup_enabled: bool = False,
     dedup_subset: List[str] | None = None,
-    duration_sec: float | None = None,     # <- НОВОЕ
-    rows_per_sec: float | None = None,     # <- НОВОЕ
+    duration_sec: float | None = None,
+    rows_per_sec: float | None = None,
 ) -> str:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cols = ", ".join(columns) if columns else "-"
@@ -42,6 +42,7 @@ def format_header(
     ]
     return "\n".join(lines)
 
+
 def format_column_section(
     *,
     title: str,
@@ -67,6 +68,19 @@ def format_column_section(
     lines.append("")
     return "\n".join(lines)
 
+
+def format_row_filters_section(*, one_filled_enabled: bool, subset: List[str], removed: int) -> str:
+    lines = []
+    lines.append("================ ФИЛЬТР СТРОК ==============")
+    lines.append(f"Правило: удалить строку, если заполнена ровно одна ячейка среди выбранных столбцов")
+    lines.append(f"Статус: {'ВКЛЮЧЕНО' if one_filled_enabled else 'ВЫКЛЮЧЕНО'}")
+    if one_filled_enabled:
+        lines.append(f"Столбцы для проверки: {', '.join(subset) if subset else '-'}")
+        lines.append(f"Удалено строк: {removed}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def format_dedup_section(*, enabled: bool, subset: List[str], removed: int, merge_columns: List[str] | None = None) -> str:
     lines = []
     lines.append("================ ДЕДУПЛИКАЦИЯ ==============")
@@ -78,6 +92,7 @@ def format_dedup_section(*, enabled: bool, subset: List[str], removed: int, merg
         lines.append(f"Удалено дубликатов: {removed}")
     lines.append("")
     return "\n".join(lines)
+
 
 def format_footer() -> str:
     return "=============== КОНЕЦ ОТЧЁТА ===============\n"
