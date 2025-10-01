@@ -1,24 +1,27 @@
 chunksize: 100000
-dedup_enabled: false
-dedup_field: nickname_mg
-dedup_merge_columns: []
+dedup_enabled: true
+dedup_field: login
+dedup_merge_columns:
+- email
+- phone
+- ip_address
 delimiter: ','
 encoding: auto
 estimate_total_rows: true
-log_name: normalize_log.txt
+log_name: 17media_normalize_log.txt
 min_length_columns:
-- nickname_mg
 - email
-- birthday
+- phone
 - ip_address
 min_length_enabled: true
 min_length_value: 3
-out_name: normalized.csv
+out_name: 17medianorm.csv
 profile: configs/profiles/uni.yaml
 row_filter_one_filled_enabled: true
 row_filter_subset:
-- nickname_mg
+- login
 - email
+- phone_pfx
+- phone
 - ip_address
-- birthday
 save_dir: D:\Desktop
