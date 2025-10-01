@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Dict, Any
 
+
 def format_header(
     *,
     input_csv: str,
@@ -50,9 +51,13 @@ def format_column_section(
     changed: int,
     cleared: int,
     examples: List[Dict[str, Any]],
+    initial_empty: int | None = None,  # <- новый параметр
+    **_: Any,  # <- на будущее: игнорируем лишние ключи, чтобы не падать
 ) -> str:
-    lines = []
+    lines: List[str] = []
     lines.append(f"================ {title} ==============")
+    if initial_empty is not None:
+        lines.append(f"[{column}] изначально пустых ячеек: {initial_empty}")
     lines.append(f"[{column}] ячеек изменено: {changed}")
     lines.append(f"[{column}] ячеек очищено по валидации: {cleared}")
     lines.append("")
@@ -72,7 +77,7 @@ def format_column_section(
 def format_row_filters_section(*, one_filled_enabled: bool, subset: List[str], removed: int) -> str:
     lines = []
     lines.append("================ ФИЛЬТР СТРОК ==============")
-    lines.append(f"Правило: удалить строку, если заполнена ровно одна ячейка среди выбранных столбцов")
+    lines.append("Правило: удалить строку, если заполнена ровно одна ячейка среди выбранных столбцов")
     lines.append(f"Статус: {'ВКЛЮЧЕНО' if one_filled_enabled else 'ВЫКЛЮЧЕНО'}")
     if one_filled_enabled:
         lines.append(f"Столбцы для проверки: {', '.join(subset) if subset else '-'}")

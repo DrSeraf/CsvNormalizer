@@ -8,14 +8,14 @@ dedup_merge_columns:
 delimiter: ','
 encoding: auto
 estimate_total_rows: true
-log_name: 17media_normalize_log.txt
+log_name: 2_17media_normalize_log.txt
 min_length_columns:
 - email
 - phone
 - ip_address
 min_length_enabled: true
 min_length_value: 3
-out_name: 17medianorm.csv
+out_name: 2_17medianorm.csv
 profile: configs/profiles/uni.yaml
 row_filter_one_filled_enabled: true
 row_filter_subset:

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Callable, Dict, Any, List, Optional
+from typing import Callable, Dict, Any, List, Optional, Tuple
 
 import yaml
 import pandas as pd
@@ -15,16 +15,18 @@ from core.logging.sink import LogSink
 from core.logging.formatter import (
     format_header,
     format_column_section,
-    format_row_filters_section,   # NEW
+    format_row_filters_section,
     format_dedup_section,
     format_footer,
 )
 from core.dedup.engine import DedupMergeEngine
-from core.row_filters.engine import OneFilledRowFilter  # NEW
+from core.row_filters.engine import OneFilledRowFilter
+
 
 TITLES = {
     "email": "ПОЧТА",
     "phone": "ТЕЛЕФОН",
+    "phone_pfx": "КОД СТРАНЫ",
     "birthdate": "ДАТА РОЖДЕНИЯ",
     "ip_address": "IP-АДРЕС",
     "lastname": "ФАМИЛИЯ",
@@ -33,6 +35,21 @@ TITLES = {
     "fullname": "ФИО",
 }
 
+# ------------------------- вспомогательные -------------------------
+def _to_str(v: Any) -> str:
+    if pd.isna(v):
+        return ""
+    return str(v)
+
+def _is_non_empty(v: Any) -> bool:
+    s = _to_str(v).strip()
+    return s != ""
+
+def _series_as_stripped(series: pd.Series) -> pd.Series:
+    # строковое представление с обрезкой по краям
+    return series.apply(lambda x: _to_str(x).strip())
+
+# --------------------------- основной раннер ---------------------------
 def run_pipeline(
     input_csv: str,
     output_csv: str,
@@ -49,15 +66,16 @@ def run_pipeline(
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
     rows_total_estimate: Optional[int] = None,
 
-    # NEW — очистка коротких значений
+    # очистка коротких значений
     min_length_enabled: bool = False,
     min_length_value: int = 3,
     min_length_columns: Optional[List[str]] = None,
 
-    # NEW — фильтр строк "только 1 заполненная"
+    # фильтр строк "ровно 1 заполненная"
     row_filter_one_filled_enabled: bool = False,
     row_filter_subset: Optional[List[str]] = None,
 ) -> None:
+    # загрузка профиля
     with open(config_yaml, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
     cfg_global = cfg.get("global", {}) if isinstance(cfg, dict) else {}
@@ -90,7 +108,8 @@ def run_pipeline(
                 "removed": 0,
             }
         },
-        "cols_stats": {},   # col -> {changed, cleared, examples}
+        # собираем сами: per-column stats
+        "cols_stats": {},   # col -> {changed, cleared, initial_empty, examples: [...]}
         "duration_sec": 0.0,
         "rows_per_sec": None,
     }
@@ -98,90 +117,131 @@ def run_pipeline(
     writer = CsvIncrementalWriter(output_csv)
     deduper: Optional[DedupMergeEngine] = None
 
+    # подготовка вспомогательных штук
     start_ts = time.perf_counter()
     rows_done = 0
-    examples_limit = 25
+    examples_limit_per_col = 25
     first_chunk_written = False
 
-    # подготовим фильтр строк (если нужен)
-    row_filter = OneFilledRowFilter(subset=row_filter_subset or []) if summary["row_filters"]["one_filled"]["enabled"] else None
+    row_filter = (
+        OneFilledRowFilter(subset=row_filter_subset or [])
+        if summary["row_filters"]["one_filled"]["enabled"]
+        else None
+    )
 
-    # подготовим функцию "короткие значения"
     ml_cols = set(min_length_columns or [])
     min_len = int(min_length_value)
     apply_min_length = bool(min_length_enabled and ml_cols)
 
     if progress_cb:
-        progress_cb({"phase": "start", "rows_done": 0, "rows_est": rows_total_estimate, "elapsed_sec": 0.0, "rps": 0.0, "percent": 0})
+        progress_cb({
+            "phase": "start",
+            "rows_done": 0,
+            "rows_est": rows_total_estimate,
+            "elapsed_sec": 0.0,
+            "rps": 0.0,
+            "percent": 0 if rows_total_estimate else None,
+        })
 
+    # обработка чанками
     for chunk in read_csv_in_chunks(input_csv, delimiter=delimiter, encoding=encoding, chunksize=chunksize):
         chunk_len = len(chunk)
         summary["rows_total"] += chunk_len
         rows_done += chunk_len
 
-        # 1) Правила из профиля по колонкам
+        # -------------------- 1) Правила из профиля --------------------
         for col_name, spec in columns_cfg.items():
             if col_name not in chunk.columns:
                 continue
 
             rules: List[Dict[str, Any]] = spec.get("rules", [])
-            series = chunk[col_name]
-            local_changed = 0
-            local_cleared = 0
-            local_examples: List[Dict[str, Any]] = []
 
+            # снимем состояние "до" (строковое, trimmed) для корректной статистики
+            before = _series_as_stripped(chunk[col_name])
+
+            # применяем правила по порядку
+            series = chunk[col_name]
             for step in rules:
                 if not isinstance(step, dict) or len(step) != 1:
                     raise ValueError(f"Bad rule format for column '{col_name}': {step}")
                 name, params = list(step.items())[0]
                 params = params or {}
-
                 fn = registry.get(name)
+
                 if registry.is_advanced(name):
-                    new_series, stats = fn(series, **params)
+                    new_series, _stats = fn(series, **params)  # игнорируем stats правил
                     series = new_series
-                    local_changed += int(stats.get("changed", 0))
-                    local_cleared += int(stats.get("cleared", stats.get("cleared_invalid", 0)))
-                    for ex in stats.get("examples", []):
-                        if len(local_examples) < examples_limit:
-                            local_examples.append(ex)
                 else:
                     series = fn(series, **params)
 
+            # опционально: min_length_clear для выбранных колонок
+            if apply_min_length and col_name in ml_cols:
+                fn_ml = registry.get("min_length_clear")
+                series, _ = fn_ml(series, min_len=min_len)
+
+            # записываем обратно
             chunk[col_name] = series
 
+            # -------------------- 2) Подсчёт статистики по колонке --------------------
+            after = _series_as_stripped(chunk[col_name])
+
+            initial_empty_mask = (before == "")
+            initial_empty = int(initial_empty_mask.sum())
+
+            changed_mask = (before != after)
+            cleared_mask = (~initial_empty_mask) & (after == "")
+
+            changed = int(changed_mask.sum())
+            cleared = int(cleared_mask.sum())
+
+            # примеры:
+            examples: List[Dict[str, Any]] = []
+
+            # (a) нормализации: изменилось и стало непустым
+            norm_idx = list(after[(changed_mask) & (after != "")].index)[:examples_limit_per_col]
+            for idx in norm_idx:
+                examples.append({
+                    "row": int(idx) if isinstance(idx, (int, float)) and pd.notna(idx) else idx,
+                    "before": before.loc[idx],
+                    "after": after.loc[idx],
+                    "note": "normalized",
+                })
+                if len(examples) >= examples_limit_per_col:
+                    break
+
+            # (b) очистки: из непустого в пустой
+            if len(examples) < examples_limit_per_col:
+                clr_idx = list(after[cleared_mask].index)[:(examples_limit_per_col - len(examples))]
+                for idx in clr_idx:
+                    examples.append({
+                        "row": int(idx) if isinstance(idx, (int, float)) and pd.notna(idx) else idx,
+                        "before": before.loc[idx],
+                        "after": "",
+                        "note": "cleared",
+                    })
+
+            # сохраним агрегат
             if col_name not in summary["cols_stats"]:
-                summary["cols_stats"][col_name] = {"changed": 0, "cleared": 0, "examples": []}
-            summary["cols_stats"][col_name]["changed"] += local_changed
-            summary["cols_stats"][col_name]["cleared"] += local_cleared
-            space_left = examples_limit - len(summary["cols_stats"][col_name]["examples"])
-            if space_left > 0 and local_examples:
-                summary["cols_stats"][col_name]["examples"].extend(local_examples[:space_left])
+                summary["cols_stats"][col_name] = {"changed": 0, "cleared": 0, "initial_empty": 0, "examples": []}
 
-        # 2) Очистка коротких значений (доп. правило из UI)
-        if apply_min_length:
-            fn = registry.get("min_length_clear")
-            for col in [c for c in chunk.columns if c in ml_cols]:
-                new_series, stats = fn(chunk[col], min_len=min_len)
-                chunk[col] = new_series
+            summary["cols_stats"][col_name]["changed"] += changed
+            summary["cols_stats"][col_name]["cleared"] += cleared
+            summary["cols_stats"][col_name]["initial_empty"] += initial_empty
 
-                if col not in summary["cols_stats"]:
-                    summary["cols_stats"][col] = {"changed": 0, "cleared": 0, "examples": []}
-                summary["cols_stats"][col]["changed"] += int(stats.get("changed", 0))
-                summary["cols_stats"][col]["cleared"] += int(stats.get("cleared", 0))
-                space_left = examples_limit - len(summary["cols_stats"][col]["examples"])
-                if space_left > 0:
-                    summary["cols_stats"][col]["examples"].extend(stats.get("examples", [])[:space_left])
+            # дозаполним примеры до лимита
+            space_left = examples_limit_per_col - len(summary["cols_stats"][col_name]["examples"])
+            if space_left > 0 and examples:
+                summary["cols_stats"][col_name]["examples"].extend(examples[:space_left])
 
-        # 3) Фильтр строк "только 1 заполненная ячейка"
+        # -------------------- 3) Фильтр строк --------------------
         if row_filter is not None:
-            before = len(chunk)
+            before_len = len(chunk)
             chunk, rstats = row_filter.apply(chunk)
-            removed_now = before - len(chunk)
+            removed_now = before_len - len(chunk)
             if removed_now:
                 summary["row_filters"]["one_filled"]["removed"] += removed_now
 
-        # 4) Дедуп/мердж или запись
+        # -------------------- 4) Дедуп/мердж или запись --------------------
         if summary["dedup"]["enabled"]:
             if deduper is None:
                 deduper = DedupMergeEngine(
@@ -195,14 +255,21 @@ def run_pipeline(
             writer.write_chunk(chunk, header=not first_chunk_written)
             first_chunk_written = True
 
-        # прогресс
+        # -------------------- прогресс --------------------
         if progress_cb:
             elapsed = time.perf_counter() - start_ts
             rps = (rows_done / elapsed) if elapsed > 0 else 0.0
             percent = None
             if rows_total_estimate and rows_total_estimate > 0:
                 percent = max(0, min(100, int(rows_done * 100 / rows_total_estimate)))
-            progress_cb({"phase": "processing", "rows_done": rows_done, "rows_est": rows_total_estimate, "elapsed_sec": elapsed, "rps": rps, "percent": percent})
+            progress_cb({
+                "phase": "processing",
+                "rows_done": rows_done,
+                "rows_est": rows_total_estimate,
+                "elapsed_sec": elapsed,
+                "rps": rps,
+                "percent": percent,
+            })
 
     # выгрузка после дедупа
     if summary["dedup"]["enabled"] and deduper is not None:
@@ -216,9 +283,16 @@ def run_pipeline(
     summary["rows_per_sec"] = (summary["rows_total"] / summary["duration_sec"]) if summary["duration_sec"] > 0 else None
 
     if progress_cb:
-        progress_cb({"phase": "done", "rows_done": rows_done, "rows_est": rows_total_estimate, "elapsed_sec": summary["duration_sec"], "rps": summary["rows_per_sec"] or 0.0, "percent": 100})
+        progress_cb({
+            "phase": "done",
+            "rows_done": rows_done,
+            "rows_est": rows_total_estimate,
+            "elapsed_sec": summary["duration_sec"],
+            "rps": summary["rows_per_sec"] or 0.0,
+            "percent": 100,
+        })
 
-    # лог
+    # -------------------- 5) ЛОГ --------------------
     log.write(format_header(
         input_csv=input_csv,
         output_csv=output_csv,
@@ -232,7 +306,7 @@ def run_pipeline(
         rows_per_sec=summary["rows_per_sec"],
     ))
 
-    # секции по колонкам
+    # секции по колонкам (с initial_empty)
     for col, stats in summary["cols_stats"].items():
         title = TITLES.get(col, col.upper())
         log.write(format_column_section(
@@ -240,6 +314,7 @@ def run_pipeline(
             column=col,
             changed=int(stats["changed"]),
             cleared=int(stats["cleared"]),
+            initial_empty=int(stats["initial_empty"]),
             examples=stats["examples"],
         ))
 
