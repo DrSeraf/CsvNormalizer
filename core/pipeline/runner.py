@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Callable, Dict, Any, List, Optional, Tuple
+from typing import Callable, Dict, Any, List, Optional
 
 import yaml
 import pandas as pd
@@ -41,13 +41,44 @@ def _to_str(v: Any) -> str:
         return ""
     return str(v)
 
-def _is_non_empty(v: Any) -> bool:
-    s = _to_str(v).strip()
-    return s != ""
-
 def _series_as_stripped(series: pd.Series) -> pd.Series:
-    # строковое представление с обрезкой по краям
+    # строковое представление с trim по краям
     return series.apply(lambda x: _to_str(x).strip())
+
+def _pick_diverse(idx_list: List[Any], k: int) -> List[Any]:
+    """
+    Возвращает до k индексов, равномерно распределённых по списку.
+    Без зависимостей от numpy.
+    """
+    n = len(idx_list)
+    if n == 0 or k <= 0:
+        return []
+    if n <= k:
+        return idx_list[:]  # все
+    # равномерные позиции: 0, step, 2*step, ... (чтобы захватить начало/середину/конец)
+    step = (n - 1) / (k - 1)
+    out = []
+    for i in range(k):
+        pos = int(round(i * step))
+        if pos >= n:
+            pos = n - 1
+        out.append(idx_list[pos])
+    # удалить возможные дубли из-за округления, сохранив порядок
+    seen = set()
+    uniq = []
+    for i in out:
+        if i not in seen:
+            uniq.append(i)
+            seen.add(i)
+    # при недоборе — дозаполним с начала
+    if len(uniq) < k:
+        for j in idx_list:
+            if j not in seen:
+                uniq.append(j)
+                seen.add(j)
+                if len(uniq) >= k:
+                    break
+    return uniq[:k]
 
 # --------------------------- основной раннер ---------------------------
 def run_pipeline(
@@ -120,7 +151,7 @@ def run_pipeline(
     # подготовка вспомогательных штук
     start_ts = time.perf_counter()
     rows_done = 0
-    examples_limit_per_col = 25
+    EXAMPLES_LIMIT = 25           # максимум примеров на колонку
     first_chunk_written = False
 
     row_filter = (
@@ -194,31 +225,44 @@ def run_pipeline(
             changed = int(changed_mask.sum())
             cleared = int(cleared_mask.sum())
 
-            # примеры:
-            examples: List[Dict[str, Any]] = []
+            # ---------- разнообразные примеры ----------
+            # кандидаты
+            norm_candidates = list(after[(changed_mask) & (after != "")].index)
+            cleared_candidates = list(after[cleared_mask].index)
 
-            # (a) нормализации: изменилось и стало непустым
-            norm_idx = list(after[(changed_mask) & (after != "")].index)[:examples_limit_per_col]
-            for idx in norm_idx:
+            # базовое целевое распределение: пополам
+            half = EXAMPLES_LIMIT // 2
+            kn = min(half, len(norm_candidates))
+            kc = min(EXAMPLES_LIMIT - kn, len(cleared_candidates))
+            # если нормализаций мало — добираем очищениями и наоборот
+            if kn < half:
+                extra = min(EXAMPLES_LIMIT - (kn + kc), len(cleared_candidates) - kc)
+                kc += max(0, extra)
+            if kc < (EXAMPLES_LIMIT - half):
+                extra = min(EXAMPLES_LIMIT - (kn + kc), len(norm_candidates) - kn)
+                kn += max(0, extra)
+
+            norm_idxs = _pick_diverse(norm_candidates, kn)
+            cleared_idxs = _pick_diverse(cleared_candidates, kc)
+
+            examples: List[Dict[str, Any]] = []
+            for idx in norm_idxs:
                 examples.append({
                     "row": int(idx) if isinstance(idx, (int, float)) and pd.notna(idx) else idx,
                     "before": before.loc[idx],
                     "after": after.loc[idx],
                     "note": "normalized",
                 })
-                if len(examples) >= examples_limit_per_col:
-                    break
-
-            # (b) очистки: из непустого в пустой
-            if len(examples) < examples_limit_per_col:
-                clr_idx = list(after[cleared_mask].index)[:(examples_limit_per_col - len(examples))]
-                for idx in clr_idx:
-                    examples.append({
-                        "row": int(idx) if isinstance(idx, (int, float)) and pd.notna(idx) else idx,
-                        "before": before.loc[idx],
-                        "after": "",
-                        "note": "cleared",
-                    })
+            for idx in cleared_idxs:
+                examples.append({
+                    "row": int(idx) if isinstance(idx, (int, float)) and pd.notna(idx) else idx,
+                    "before": before.loc[idx],
+                    "after": "",
+                    "note": "cleared",
+                })
+            # ограничение на всякий случай
+            if len(examples) > EXAMPLES_LIMIT:
+                examples = examples[:EXAMPLES_LIMIT]
 
             # сохраним агрегат
             if col_name not in summary["cols_stats"]:
@@ -228,8 +272,9 @@ def run_pipeline(
             summary["cols_stats"][col_name]["cleared"] += cleared
             summary["cols_stats"][col_name]["initial_empty"] += initial_empty
 
-            # дозаполним примеры до лимита
-            space_left = examples_limit_per_col - len(summary["cols_stats"][col_name]["examples"])
+            # дозаполним примеры до лимита (с учётом уже накопленных)
+            already = len(summary["cols_stats"][col_name]["examples"])
+            space_left = EXAMPLES_LIMIT - already
             if space_left > 0 and examples:
                 summary["cols_stats"][col_name]["examples"].extend(examples[:space_left])
 
