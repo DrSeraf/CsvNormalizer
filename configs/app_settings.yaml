@@ -2,21 +2,18 @@ chunksize: 100000
 dedup_enabled: true
 dedup_field: email
 dedup_merge_columns:
-- ip_address
-- login
+- username
 delimiter: ','
 encoding: auto
 estimate_total_rows: true
-log_name: HackLeetDONE.txt
-min_length_columns:
-- email
+log_name: HiAPKDone.txt
+min_length_columns: []
 min_length_enabled: false
 min_length_value: 1
-out_name: HackLeetDONE.csv
+out_name: HiAPKDONE.csv
 profile: configs/profiles/uni.yaml
 row_filter_one_filled_enabled: true
 row_filter_subset:
 - email
-- login
-- ip_address
+- username
 save_dir: D:\Desktop
