@@ -26,6 +26,7 @@ from core.row_filters.engine import OneFilledRowFilter
 TITLES = {
     "email": "ПОЧТА",
     "phone": "ТЕЛЕФОН",
+    "phone10": "ТЕЛЕФОН (10)",
     "phone_pfx": "КОД СТРАНЫ",
     "birthdate": "ДАТА РОЖДЕНИЯ",
     "ip_address": "IP-АДРЕС",
@@ -277,6 +278,64 @@ def run_pipeline(
             space_left = EXAMPLES_LIMIT - already
             if space_left > 0 and examples:
                 summary["cols_stats"][col_name]["examples"].extend(examples[:space_left])
+
+        # -------------------- 2.1) Спец-логика телефона --------------------
+        # Требования:
+        # - Оставляем только цифры
+        # - Если длина > 13 — очищаем
+        # - Если есть более 6 одинаковых цифр подряд — очищаем
+        # - Если длина == 10 — переносим в phone10, из phone удаляем
+        # - Если длина > 10 — 10 правых цифр в phone10, левую часть в phone_pfx
+        # - Если 3..9 — оставляем в phone как есть
+        # - Иначе (<=2 или пусто) — очищаем
+        if "phone" in chunk.columns:
+            # гарантируем наличие целевых колонок во всех чанках для стабильного заголовка CSV
+            if "phone10" not in chunk.columns:
+                chunk["phone10"] = ""
+            if "phone_pfx" not in chunk.columns:
+                chunk["phone_pfx"] = ""
+
+            # нормализуем к строкам и оставляем только цифры
+            p = chunk["phone"].fillna("").astype(str)
+            p = p.str.replace(r"\D+", "", regex=True)
+
+            # Валидаторы
+            too_long = p.str.len() > 13
+            bad_repeat = p.str.contains(r"(\d)\1{6,}", regex=True)
+            too_short_or_empty = p.str.len() <= 2
+
+            # Базово очистим всё некорректное
+            invalid = (too_long | bad_repeat | too_short_or_empty)
+            if invalid.any():
+                chunk.loc[invalid, ["phone", "phone10", "phone_pfx"]] = ""
+
+            # Перерасчитаем p после очисток для последующих масок
+            p = chunk["phone"].fillna("").astype(str)
+            p = p.str.replace(r"\D+", "", regex=True)
+
+            len_ser = p.str.len()
+            is_eq10 = len_ser == 10
+            is_gt10 = len_ser > 10
+            is_3_9 = (len_ser >= 3) & (len_ser <= 9)
+
+            # == 10 цифр: переносим в phone10, phone чистим
+            if is_eq10.any():
+                chunk.loc[is_eq10, "phone10"] = p[is_eq10]
+                chunk.loc[is_eq10, "phone"] = ""
+                chunk.loc[is_eq10, "phone_pfx"] = ""
+
+            # > 10 цифр: 10 правых в phone10, левую часть в phone_pfx, phone чистим
+            if is_gt10.any():
+                # правые 10
+                chunk.loc[is_gt10, "phone10"] = p[is_gt10].str[-10:]
+                # левая часть (префикс)
+                chunk.loc[is_gt10, "phone_pfx"] = p[is_gt10].str[:-10]
+                chunk.loc[is_gt10, "phone"] = ""
+
+            # 3..9 цифр — оставляем в phone, целевые чистые
+            if is_3_9.any():
+                chunk.loc[is_3_9, "phone"] = p[is_3_9]
+                chunk.loc[is_3_9, ["phone10", "phone_pfx"]] = ""
 
         # -------------------- 3) Фильтр строк --------------------
         if row_filter is not None:

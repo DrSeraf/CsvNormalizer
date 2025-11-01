@@ -1,19 +1,25 @@
 chunksize: 100000
-dedup_enabled: true
-dedup_field: email
-dedup_merge_columns:
-- username
+dedup_enabled: false
+dedup_field: birthdate
+dedup_merge_columns: []
 delimiter: ','
 encoding: auto
 estimate_total_rows: true
-log_name: HiAPKDone.txt
-min_length_columns: []
-min_length_enabled: false
-min_length_value: 1
-out_name: HiAPKDONE.csv
+log_name: 70KFinalDone.txt
+min_length_columns:
+- fullname
+min_length_enabled: true
+min_length_value: 2
+out_name: 70KFinalDone.csv
 profile: configs/profiles/uni.yaml
 row_filter_one_filled_enabled: true
 row_filter_subset:
-- email
-- username
+- birthdate
+- fullname
+- phone
+- street
+- locality
+- country
+- region
+- zip
 save_dir: D:\Desktop

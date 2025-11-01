@@ -20,3 +20,6 @@ venv/
 # Streamlit
 .streamlit/cache/
 .streamlit/secrets.toml
+
+
+.dedup_merge_tmp.db
