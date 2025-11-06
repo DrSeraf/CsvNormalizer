@@ -21,6 +21,27 @@ def min_length_clear(series: pd.Series, *, min_len: int = 3, examples_limit: int
     original = series.copy()
     s = series.copy()
 
+    def _looks_like_romanized_east_asian_name(x: str) -> bool:
+        # Keep short CJK strings outright
+        if re.search(r"[\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]", x):
+            return True
+
+        y = x.lower()
+        y = re.sub(r"[-']", " ", y)
+        parts = [p for p in y.split() if p]
+        if 1 <= len(parts) <= 3 and all(re.fullmatch(r"[a-z]{1,4}", p or "") for p in parts):
+            # Two or three short latin tokens like "wo li", "lu an"
+            if len(parts) >= 2 and all(1 <= len(p) <= 3 for p in parts):
+                return True
+            # Single-token common short surnames/given names
+            common_single = {
+                "li", "wu", "xu", "yu", "su", "hu", "ho", "lu", "lo", "ng",
+                "do", "to", "ko", "ma", "an", "bo", "xi", "qi", "he", "le",
+            }
+            if len(parts) == 1 and parts[0] in common_single:
+                return True
+        return False
+
     def _apply(v):
         if pd.isna(v):
             return v
@@ -29,6 +50,9 @@ def min_length_clear(series: pd.Series, *, min_len: int = 3, examples_limit: int
         if x == "":
             return x
         if len(x) < int(min_len):
+            # Do not clear probable romanized East-Asian short names (e.g., "wo li")
+            if _looks_like_romanized_east_asian_name(x):
+                return v
             return ""
         return v  # важно: сохраняем оригинал, чтобы не ломать регистр/формат после предыдущих правил
 
