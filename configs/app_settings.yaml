@@ -1,25 +1,29 @@
 chunksize: 100000
 dedup_enabled: false
-dedup_field: birthdate
+dedup_field: lastname
 dedup_merge_columns: []
 delimiter: ','
 encoding: auto
 estimate_total_rows: true
-log_name: 70KFinalDone.txt
+log_name: CPCsvDone.txt
 min_length_columns:
-- fullname
+- firstname
+- lastname
 min_length_enabled: true
 min_length_value: 2
-out_name: 70KFinalDone.csv
+out_name: CPCsvDone.csv
 profile: configs/profiles/uni.yaml
 row_filter_one_filled_enabled: true
 row_filter_subset:
-- birthdate
-- fullname
+- firstname
+- lastname
 - phone
+- email
 - street
+- district
 - locality
-- country
 - region
+- country
 - zip
+- address
 save_dir: D:\Desktop
