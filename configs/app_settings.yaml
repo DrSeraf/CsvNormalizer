@@ -1,29 +1,26 @@
 chunksize: 100000
 dedup_enabled: false
-dedup_field: lastname
+dedup_field: company_name
 dedup_merge_columns: []
 delimiter: ','
 encoding: auto
 estimate_total_rows: true
-log_name: CPCsvDone.txt
+log_name: CivEngDone.txt
 min_length_columns:
-- firstname
-- lastname
+- fullname
+- company_name
 min_length_enabled: true
 min_length_value: 2
-out_name: CPCsvDone.csv
+out_name: CivEngDone.csv
+phone_prefix_strict_validate: false
 profile: configs/profiles/uni.yaml
 row_filter_one_filled_enabled: true
 row_filter_subset:
-- firstname
-- lastname
 - phone
 - email
-- street
-- district
 - locality
 - region
-- country
-- zip
 - address
+- fullname
+- company_name
 save_dir: D:\Desktop
