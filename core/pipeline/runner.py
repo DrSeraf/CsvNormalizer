@@ -295,6 +295,11 @@ def run_pipeline(
             if "phone_pfx" not in chunk.columns:
                 chunk["phone_pfx"] = ""
 
+            # снимем состояние ДО для логирования спец-логики
+            before_phone = _series_as_stripped(chunk["phone"])
+            before_phone10 = _series_as_stripped(chunk["phone10"])
+            before_phone_pfx = _series_as_stripped(chunk["phone_pfx"])
+
             # нормализуем к строкам и оставляем только цифры
             p = chunk["phone"].fillna("").astype(str)
             p = p.str.replace(r"\D+", "", regex=True)
@@ -328,14 +333,79 @@ def run_pipeline(
             if is_gt10.any():
                 # правые 10
                 chunk.loc[is_gt10, "phone10"] = p[is_gt10].str[-10:]
-                # левая часть (префикс)
-                chunk.loc[is_gt10, "phone_pfx"] = p[is_gt10].str[:-10]
+                # левая часть (префикс) с удалением ведущих нулей
+                _pfx = p[is_gt10].str[:-10].str.lstrip("0")
+                chunk.loc[is_gt10, "phone_pfx"] = _pfx
                 chunk.loc[is_gt10, "phone"] = ""
 
             # 3..9 цифр — оставляем в phone, целевые чистые
             if is_3_9.any():
                 chunk.loc[is_3_9, "phone"] = p[is_3_9]
                 chunk.loc[is_3_9, ["phone10", "phone_pfx"]] = ""
+
+            # ---------- Подсчёт статистики и примеров для phone/phone10/phone_pfx ----------
+            after_phone = _series_as_stripped(chunk["phone"])
+            after_phone10 = _series_as_stripped(chunk["phone10"])
+            after_phone_pfx = _series_as_stripped(chunk["phone_pfx"])
+
+            def _update_stats(col_name: str, before: pd.Series, after: pd.Series, set_initial_empty: bool = False) -> None:
+                changed_mask = (before != after)
+                initial_empty_mask = (before == "")
+                cleared_mask = (~initial_empty_mask) & (after == "")
+                changed = int(changed_mask.sum())
+                cleared = int(cleared_mask.sum())
+                initial_empty = int(initial_empty_mask.sum()) if set_initial_empty else 0
+
+                # создать агрегат при необходимости
+                if col_name not in summary["cols_stats"]:
+                    summary["cols_stats"][col_name] = {"changed": 0, "cleared": 0, "initial_empty": 0, "examples": []}
+
+                summary["cols_stats"][col_name]["changed"] += changed
+                summary["cols_stats"][col_name]["cleared"] += cleared
+                if set_initial_empty:
+                    summary["cols_stats"][col_name]["initial_empty"] += initial_empty
+
+                # Сформируем примеры до лимита
+                norm_candidates = list(after[(changed_mask) & (after != "")].index)
+                cleared_candidates = list(after[cleared_mask].index)
+                half = EXAMPLES_LIMIT // 2
+                kn = min(half, len(norm_candidates))
+                kc = min(EXAMPLES_LIMIT - kn, len(cleared_candidates))
+                if kn < half:
+                    extra = min(EXAMPLES_LIMIT - (kn + kc), len(cleared_candidates) - kc)
+                    kc += max(0, extra)
+                if kc < (EXAMPLES_LIMIT - half):
+                    extra = min(EXAMPLES_LIMIT - (kn + kc), len(norm_candidates) - kn)
+                    kn += max(0, extra)
+                norm_idxs = _pick_diverse(norm_candidates, kn)
+                cleared_idxs = _pick_diverse(cleared_candidates, kc)
+                examples: List[Dict[str, Any]] = []
+                for idx in norm_idxs:
+                    examples.append({
+                        "row": int(idx) if isinstance(idx, (int, float)) and pd.notna(idx) else idx,
+                        "before": before.loc[idx],
+                        "after": after.loc[idx],
+                        "note": "normalized",
+                    })
+                for idx in cleared_idxs:
+                    examples.append({
+                        "row": int(idx) if isinstance(idx, (int, float)) and pd.notna(idx) else idx,
+                        "before": before.loc[idx],
+                        "after": "",
+                        "note": "cleared",
+                    })
+                if len(examples) > EXAMPLES_LIMIT:
+                    examples = examples[:EXAMPLES_LIMIT]
+                already = len(summary["cols_stats"][col_name]["examples"])
+                space_left = EXAMPLES_LIMIT - already
+                if space_left > 0 and examples:
+                    summary["cols_stats"][col_name]["examples"].extend(examples[:space_left])
+
+            # Для phone и phone_pfx начальные пустые уже учитывались в правилах профиля (если были), не дублируем
+            _update_stats("phone", before_phone, after_phone, set_initial_empty=False)
+            _update_stats("phone_pfx", before_phone_pfx, after_phone_pfx, set_initial_empty=("phone_pfx" not in columns_cfg))
+            # Для phone10 считаем initial_empty, т.к. колонки не было в профиле
+            _update_stats("phone10", before_phone10, after_phone10, set_initial_empty=True)
 
         # -------------------- 3) Фильтр строк --------------------
         if row_filter is not None:
@@ -397,6 +467,11 @@ def run_pipeline(
         })
 
     # -------------------- 5) ЛОГ --------------------
+    # Допишем в сводку фактические выходные колонки, если спец-логика их создала
+    for extra_col in ("phone10", "phone_pfx"):
+        if extra_col not in summary["columns"]:
+            summary["columns"].append(extra_col)
+
     log.write(format_header(
         input_csv=input_csv,
         output_csv=output_csv,

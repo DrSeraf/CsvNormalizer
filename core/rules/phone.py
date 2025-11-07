@@ -102,6 +102,8 @@ def phone_prefix_basic(
         x = _sanitize(str(v).strip())
         # оставляем только цифры
         x = re.sub(r"\D+", "", x)
+        # удаляем ведущие нули (например, 001 -> 1)
+        x = x.lstrip("0")
         if x == "":
             return x
         # длина 1..3
