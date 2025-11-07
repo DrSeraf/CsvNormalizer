@@ -106,6 +106,8 @@ def run_pipeline(
     # фильтр строк "ровно 1 заполненная"
     row_filter_one_filled_enabled: bool = False,
     row_filter_subset: Optional[List[str]] = None,
+    # проверка префикса телефонов на реальный код страны (E.164)
+    phone_prefix_strict_validate: bool = False,
 ) -> None:
     # загрузка профиля
     with open(config_yaml, "r", encoding="utf-8") as f:
@@ -342,6 +344,37 @@ def run_pipeline(
             if is_3_9.any():
                 chunk.loc[is_3_9, "phone"] = p[is_3_9]
                 chunk.loc[is_3_9, ["phone10", "phone_pfx"]] = ""
+
+            # Дополнительная проверка префикса: после удаления ведущих нулей
+            # Если strict_validate включён — оставить только реально существующие коды стран (E.164)
+            # Иначе — проверять только что длина >= 3
+            pfx_ser = chunk["phone_pfx"].fillna("").astype(str)
+            # на всякий случай убедимся, что только цифры и убраны ведущие нули
+            pfx_ser = pfx_ser.str.replace(r"\D+", "", regex=True).str.lstrip("0")
+            if phone_prefix_strict_validate:
+                cc_set = None
+                try:
+                    import phonenumbers  # type: ignore
+                    cc_map = phonenumbers.COUNTRY_CODE_TO_REGION_CODE
+                    cc_set = {int(k) for k in cc_map.keys()}
+                except Exception:
+                    cc_set = None
+                if cc_set is not None:
+                    invalid_pfx = (pfx_ser != "") & (~pfx_ser.apply(lambda x: x.isdigit() and int(x) in cc_set))
+                    if invalid_pfx.any():
+                        pfx_ser.loc[invalid_pfx] = ""
+                else:
+                    # нет библиотеки — мягкая проверка по длине >=3
+                    invalid_pfx = (pfx_ser != "") & (pfx_ser.str.len() < 3)
+                    if invalid_pfx.any():
+                        pfx_ser.loc[invalid_pfx] = ""
+            else:
+                # только длина >= 3
+                invalid_pfx = (pfx_ser != "") & (pfx_ser.str.len() < 3)
+                if invalid_pfx.any():
+                    pfx_ser.loc[invalid_pfx] = ""
+            # записываем итоговый pfx_ser обратно
+            chunk["phone_pfx"] = pfx_ser
 
             # ---------- Подсчёт статистики и примеров для phone/phone10/phone_pfx ----------
             after_phone = _series_as_stripped(chunk["phone"])

@@ -49,6 +49,9 @@ DEFAULT_SETTINGS = {
     "min_length_enabled": False,
     "min_length_value": 3,
     "min_length_columns": [],
+    # телефоны: проверка префикса на реальный код страны (E.164)
+    # выключено по умолчанию
+    "phone_prefix_strict_validate": False,
 }
 
 
@@ -267,6 +270,15 @@ def sidebar_inputs():
         disabled=not (ml_enabled and columns),
     )
 
+    # Телефоны — проверка префикса (E.164)
+    st.sidebar.divider()
+    st.sidebar.header("Телефон — проверка префикса")
+    phone_prefix_strict_validate = st.sidebar.checkbox(
+        "Проверять коды страны (E.164) и очищать несуществующие",
+        value=bool(settings.get("phone_prefix_strict_validate", False)),
+    )
+    st.sidebar.caption("Если выключено — проверяем только, что длина префикса ≥ 3 (после удаления ведущих нулей)")
+
     return (
         input_path,
         output_path,
@@ -289,6 +301,7 @@ def sidebar_inputs():
         ml_enabled,
         ml_value,
         ml_columns,
+        phone_prefix_strict_validate,
     )
 
 
@@ -345,6 +358,7 @@ def run_button(
     ml_enabled,
     ml_value,
     ml_columns,
+    phone_prefix_strict_validate,
 ):
     st.subheader("Запуск")
     can_run = all([input_path, output_path, log_path, profile])
@@ -410,6 +424,7 @@ def run_button(
             "min_length_enabled": bool(ml_enabled),
             "min_length_value": int(ml_value),
             "min_length_columns": list(ml_columns or []),
+            "phone_prefix_strict_validate": bool(phone_prefix_strict_validate),
         })
 
         with st.spinner("Обработка… это может занять время на больших файлах"):
@@ -435,6 +450,7 @@ def run_button(
                 min_length_enabled=ml_enabled,
                 min_length_value=int(ml_value),
                 min_length_columns=ml_columns,
+                phone_prefix_strict_validate=bool(phone_prefix_strict_validate),
             )
 
         prog.progress(100)
@@ -494,6 +510,7 @@ def main():
         ml_enabled,
         ml_value,
         ml_columns,
+        phone_prefix_strict_validate,
     ) = sidebar_inputs()
     show_preview(input_path, delimiter, encoding)
     run_button(
@@ -517,6 +534,7 @@ def main():
         ml_enabled,
         ml_value,
         ml_columns,
+        phone_prefix_strict_validate,
     )
 
     # очистка временного файла
