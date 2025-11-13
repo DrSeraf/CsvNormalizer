@@ -1,26 +1,22 @@
 chunksize: 100000
-dedup_enabled: false
-dedup_field: company_name
-dedup_merge_columns: []
+dedup_enabled: true
+dedup_field: email
+dedup_merge_columns:
+- nickname_evony
+- ip_address
 delimiter: ','
 encoding: auto
 estimate_total_rows: true
-log_name: CivEngDone.txt
-min_length_columns:
-- fullname
-- company_name
-min_length_enabled: true
+log_name: EvonyDone.txt
+min_length_columns: []
+min_length_enabled: false
 min_length_value: 2
-out_name: CivEngDone.csv
+out_name: EvonyDone.csv
 phone_prefix_strict_validate: false
 profile: configs/profiles/uni.yaml
 row_filter_one_filled_enabled: true
 row_filter_subset:
-- phone
 - email
-- locality
-- region
-- address
-- fullname
-- company_name
+- nickname_evony
+- ip_address
 save_dir: D:\Desktop

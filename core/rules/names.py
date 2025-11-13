@@ -1,6 +1,6 @@
 # core/rules/names.py
 from __future__ import annotations
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 import re
 import unicodedata
 import pandas as pd
@@ -14,7 +14,7 @@ def _sanitize_invisible_text(x: str) -> str:
     x = re.sub(r"[\x00-\x1F\x7F]", "", x)            # control chars
     return x
 
-def _normalize_name(value: Any, min_letters: int) -> str:
+def _normalize_name(value: Any, min_letters: Optional[int]) -> str:
     if pd.isna(value):
         return value
     s = str(value)
@@ -60,12 +60,17 @@ def _normalize_name(value: Any, min_letters: int) -> str:
 
     # считаем только буквы (без пробелов)
     letters_count = sum(1 for ch in s if ch.isalpha())
-    if letters_count < min_letters:
+    if min_letters is not None and min_letters > 0 and letters_count < min_letters:
         return ""
 
     return s
 
-def name_basic(series: pd.Series, *, min_letters: int = 3, examples_limit: int = 25) -> Tuple[pd.Series, Dict[str, Any]]:
+def name_basic(
+    series: pd.Series,
+    *,
+    min_letters: Optional[int] = None,
+    examples_limit: int = 25
+) -> Tuple[pd.Series, Dict[str, Any]]:
     original = series.copy()
     s = series.copy()
 

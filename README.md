@@ -95,16 +95,16 @@ columns:
 
   lastname:
     rules:
-      - name_basic: {min_letters: 3}
+      - name_basic: {}
   firstname:
     rules:
-      - name_basic: {min_letters: 3}
+      - name_basic: {}
   middlename:
     rules:
-      - name_basic: {min_letters: 3}
+      - name_basic: {}
   fullname:
     rules:
-      - name_basic: {min_letters: 3}
+      - name_basic: {}
 ```
 
 > Отсутствующие в данных колонки тихо игнорируются.
@@ -159,20 +159,16 @@ columns:
 
   lastname:
     rules:
-      - name_basic: {min_letters: 3}
-      - min_length_clear: {min_len: 3}
+      - name_basic: {}
   firstname:
     rules:
-      - name_basic: {min_letters: 3}
-      - min_length_clear: {min_len: 3}
+      - name_basic: {}
   middlename:
     rules:
-      - name_basic: {min_letters: 3}
-      - min_length_clear: {min_len: 3}
+      - name_basic: {}
   fullname:
     rules:
-      - name_basic: {min_letters: 3}
-      - min_length_clear: {min_len: 3}
+      - name_basic: {}
 ```
 
 ---
@@ -184,7 +180,7 @@ columns:
 - Дефисы и апострофы заменяем на **одинарный пробел**.  
 - Удаляем всё, что не буква/пробел (Unicode-буквы поддерживаются).  
 - **Title Case** (каждое слово с заглавной, не схлопывая пробелы).  
-- Если букв < **3** — очищаем ячейку.
+- Очистка коротких значений выполняется только при включении опции «Очистка коротких значений» или добавлении правила `min_length_clear` в профиль.
 
 ### `birthdate`
 - Приводим к формату **`dd/mm/yyyy`** из различных входных вариантов (`dd-mm-yy`, `yyyymmdd`, `ddmmyy`, и т.п.).  

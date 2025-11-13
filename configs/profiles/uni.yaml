@@ -44,17 +44,13 @@ columns:
 
   lastname:
     rules:
-      - name_basic: {min_letters: 3}
-      - min_length_clear: {min_len: 3}
+      - name_basic: {}
   firstname:
     rules:
-      - name_basic: {min_letters: 3}
-      - min_length_clear: {min_len: 3}
+      - name_basic: {}
   middlename:
     rules:
-      - name_basic: {min_letters: 3}
-      - min_length_clear: {min_len: 3}
+      - name_basic: {}
   fullname:
     rules:
-      - name_basic: {min_letters: 3}
-      - min_length_clear: {min_len: 3}
+      - name_basic: {}
