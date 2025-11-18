@@ -41,7 +41,7 @@ DEFAULT_SETTINGS = {
 
     "estimate_total_rows": True,
 
-    # фильтр строк: удалять, если ровно 1 непустая среди выбранных столбцов
+    # фильтр строк: удалять, если не более 1 непустой среди выбранных столбцов
     "row_filter_one_filled_enabled": False,
     "row_filter_subset": [],
 
@@ -234,11 +234,11 @@ def sidebar_inputs():
         value=bool(settings.get("estimate_total_rows", True)),
     )
 
-    # Фильтр строк — удалить, если ровно 1 заполненная среди выбранных
+    # Фильтр строк — удалить, если 0 или 1 заполненная среди выбранных
     st.sidebar.divider()
     st.sidebar.header("Фильтр строк")
     rf_enabled = st.sidebar.checkbox(
-        "Удалять строки, если среди выбранных столбцов заполнена ровно 1 ячейка",
+        "Удалять строки, если среди выбранных столбцов заполнена 0 или 1 ячейка",
         value=bool(settings.get("row_filter_one_filled_enabled", False)),
     )
     rf_subset_saved = [c for c in settings.get("row_filter_subset", []) if c in (columns or [])]

@@ -5,23 +5,20 @@ dedup_merge_columns: []
 delimiter: ','
 encoding: auto
 estimate_total_rows: true
-log_name: MywtOfficeComDone.txt
+log_name: FlexBookeDone.txt
 min_length_columns:
 - fullname
-- firstname
-- lastname
 min_length_enabled: true
 min_length_value: 2
-out_name: MywtOfficeComDone.csv
+out_name: FlexBookeDone.csv
 phone_prefix_strict_validate: false
 profile: configs/profiles/uni.yaml
 row_filter_one_filled_enabled: true
 row_filter_subset:
 - email
-- phone
-- birthdate
+- locality
+- street
+- country
+- zip
 - fullname
-- firstname
-- lastname
-- ip_address
 save_dir: D:\Desktop

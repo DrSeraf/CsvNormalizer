@@ -14,7 +14,7 @@ class OneFilledRuleStats:
 
 class OneFilledRowFilter:
     """
-    Удаляет строки, в которых среди выбранных столбцов ровно ОДНА непустая ячейка.
+    Удаляет строки, в которых среди выбранных столбцов заполнена не более одной ячейки.
     Непустая ячейка = значение не NaN и не пустая строка "".
     """
 
@@ -41,8 +41,8 @@ class OneFilledRowFilter:
             mask = self._non_empty_mask(df[col])
             non_empty_counts = mask.astype("int32") if i == 0 else (non_empty_counts + mask.astype("int32"))
 
-        # оставляем строки, где НЕ ровно 1 непустая
-        keep_mask = non_empty_counts != 1
+        # оставляем строки, где непустых столбцов больше 1
+        keep_mask = non_empty_counts > 1
         removed_now = int((~keep_mask).sum())
         if removed_now:
             self.stats.removed += removed_now
