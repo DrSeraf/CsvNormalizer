@@ -1,22 +1,27 @@
 chunksize: 100000
-dedup_enabled: true
+dedup_enabled: false
 dedup_field: email
-dedup_merge_columns:
-- nickname_evony
-- ip_address
+dedup_merge_columns: []
 delimiter: ','
 encoding: auto
 estimate_total_rows: true
-log_name: EvonyDone.txt
-min_length_columns: []
-min_length_enabled: false
+log_name: MywtOfficeComDone.txt
+min_length_columns:
+- fullname
+- firstname
+- lastname
+min_length_enabled: true
 min_length_value: 2
-out_name: EvonyDone.csv
+out_name: MywtOfficeComDone.csv
 phone_prefix_strict_validate: false
 profile: configs/profiles/uni.yaml
 row_filter_one_filled_enabled: true
 row_filter_subset:
 - email
-- nickname_evony
+- phone
+- birthdate
+- fullname
+- firstname
+- lastname
 - ip_address
 save_dir: D:\Desktop
